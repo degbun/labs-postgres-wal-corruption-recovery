@@ -336,7 +336,3 @@ kubectl logs postgres-0 --follow
 
 ---
 
-<p align="center">
-  <em>The pod flatlines. You grab the defibrillator. It comes back.</em><br/>
-  <strong>postgres-flatline-lab</strong>
-</p>
