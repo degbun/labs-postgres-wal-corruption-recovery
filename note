@@ -1,0 +1,74 @@
+
+Phase 1 — Manifestes Kubernetes
+postgres-sts.yaml — StatefulSet + Service + PVC :
+
+kubectl apply -f postgres-sts.yaml
+kubectl wait pod/postgres-0 --for=condition=Ready --timeout=60s
+
+Phase 2 — Corrompre le WAL
+
+# Entrer dans le pod et écraser un segment WAL avec du bruit aléatoire
+kubectl exec -it postgres-0 -- bash -c \
+  "dd if=/dev/urandom of=/var/lib/postgresql/data/pgdata/pg_wal/000000010000000000000001 bs=1M count=1 conv=notrunc"
+
+# Vérifier que postgres plante bien au redémarrage
+kubectl delete pod postgres-0
+# Le STS va tenter de recréer le pod → il va crashlooper
+kubectl get pods -w  # tu verras CrashLoopBackOff
+
+
+Phase 3 — Scale down + Pod rescue
+# Scale down le StatefulSet à 0 pour libérer le PVC
+kubectl scale statefulset postgres --replicas=0
+
+# Vérifier que le pod est bien terminé
+kubectl get pods
+
+kubectl apply -f rescue-pod.yaml
+kubectl wait pod/postgres-rescue --for=condition=Ready --timeout=30s
+
+Phase 4 — Réparation avec pg_resetwal
+
+# Entrer dans le pod rescue
+kubectl exec -it postgres-rescue -- bash
+
+# Vérifier l'état corrompu (doit afficher des erreurs)
+pg_controldata /var/lib/postgresql/data/pgdata | grep -E "state|checkpoint"
+
+# Lancer la réparation (le -f force même sans shutdown propre)
+pg_resetwal -f /var/lib/postgresql/data/pgdata
+
+# Sortir du pod
+exit
+
+
+
+⚠️ pg_resetwal détruit les transactions non commitées. C'est une réparation de dernier recours — parfait pour le lab, jamais en prod sans backup.
+
+Phase 5 — Rescale et vérification
+
+# Supprimer le pod rescue pour libérer le PVC
+kubectl delete pod postgres-rescue
+
+# Rescale le StatefulSet
+kubectl scale statefulset postgres --replicas=1
+
+# Observer le démarrage
+kubectl get pods -w
+
+# Vérifier les logs — postgres doit démarrer proprement
+kubectl logs postgres-0 --follow
+
+# Test de connexion
+kubectl exec -it postgres-0 -- psql -U postgres -c "SELECT version();"
+```
+
+---
+
+## Ce que tu vas observer
+
+Après `pg_resetwal`, PostgreSQL va démarrer en mode **recovery minimal** — il va recréer un nouveau timeline WAL propre. Le message clé dans les logs sera :
+```
+database system was shut down at ...
+entering standby mode    ← ou directement "ready to accept connections"
+
