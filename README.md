@@ -1,4 +1,4 @@
-# 🫀 postgres-flatline-lab
+#  labs-postgres-wal-corruption-recovery
 
 > **Deliberately corrupt a PostgreSQL WAL on Kubernetes, watch it flatline, then bring it back with `pg_resetwal`.**
 
